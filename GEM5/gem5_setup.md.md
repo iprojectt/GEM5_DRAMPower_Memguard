@@ -1,12 +1,10 @@
----
-
-# GEM5 Setup and Build Guide (Chronological Steps)
+# GEM5 Setup and Build Guide
 
 ## Overview
 
 This document describes the sequence of steps performed to successfully build and configure **gem5 v20.1.0.4** for running **SPEC CPU2017 workloads** with **DRAM tracing** and **MemGuard experiments**.
 
-Target environment used:
+### Target Environment
 
 | Component | Version |
 |---|---|
@@ -15,8 +13,6 @@ Target environment used:
 | Compiler | g++-9 |
 | glibc | 2.35 |
 | gem5 | v20.1.0.4 |
-
-Each step is listed in the exact order it was executed.
 
 ---
 
@@ -68,10 +64,9 @@ sudo apt install \
 
 # Step 3: Install Compatible SCons Version
 
-This step was required because of  
-→ [[#Problem 1: SCons Version Compatibility]]
+Newer SCons versions are incompatible with gem5 v20.1.0.4.
 
-Install the compatible version:
+Install compatible SCons and Python dependency:
 
 ```bash
 pip3 install --user scons==3.1.2 six
@@ -83,7 +78,7 @@ Add local binaries to PATH:
 export PATH=$HOME/.local/bin:$PATH
 ```
 
-Verify:
+Verify installation:
 
 ```bash
 scons --version
@@ -91,10 +86,9 @@ scons --version
 
 ---
 
-# Step 4: Patch Python Compatibility Issue
+# Step 4: Patch Python 3.10 Compatibility Issue
 
-This step was required because of  
-→ [[#Problem 2: Python 3.10 collections.Mapping Error]]
+gem5 v20.1.0.4 contains an old Python import that is incompatible with Python 3.10.
 
 Patch the source file:
 
@@ -105,10 +99,7 @@ src/python/m5/debug.py
 
 ---
 
-# Step 5: Patch gem5 Source Code
-
-This step was required because of  
-→ [[#Problem 3: SIGSTKSZ Compilation Error]]
+# Step 5: Patch SIGSTKSZ Compilation Issue
 
 Open the file:
 
@@ -156,7 +147,7 @@ Verify the gem5 binary runs:
 build/X86/gem5.opt --help
 ```
 
-If successful, gem5 displays its usage information.
+If successful, gem5 displays usage information.
 
 ---
 
@@ -169,7 +160,7 @@ cd util/m5
 scons build/x86/out/m5
 ```
 
-Build terminal utility:
+Build the terminal utility:
 
 ```bash
 cd ../term
@@ -186,8 +177,7 @@ m5term
 
 # Step 9: Enable KVM Performance Counters
 
-This step was required because of  
-→ [[#Problem 4: KVM Performance Counter Permission Error]]
+This step is required for KVM fast-forwarding and ROI CPU switching workflows.
 
 Temporary fix:
 
@@ -209,7 +199,7 @@ Add:
 kernel.perf_event_paranoid=-1
 ```
 
-Apply:
+Apply changes:
 
 ```bash
 sudo sysctl -p
@@ -237,13 +227,13 @@ Run the benchmark script:
 ./run_single_benchmark.sh
 ```
 
-This performs:
+This workflow performs:
 
-1. Boot Linux using KVM CPUs
-2. Fast-forward workload execution
-3. Switch to O3 CPUs at ROI
-4. Run detailed simulation
-5. Generate DRAM traces
+1. Linux boot using KVM CPUs
+2. Fast-forwarding workload execution
+3. CPU switch to O3 at ROI
+4. Detailed simulation
+5. DRAM trace generation
 
 ---
 
@@ -261,8 +251,8 @@ Important files include:
 |---|---|
 | dram_raw_trace.txt | DRAM state trace |
 | stats.txt | gem5 statistics |
-| simout | simulation output |
-| simerr | simulation errors |
+| simout | Simulation output |
+| simerr | Simulation errors |
 
 ---
 
@@ -295,72 +285,109 @@ DRAMPower Analysis
 
 ---
 
-# Referenced Problems
+# Common Problems and Fixes
+
+## Problem 1: SCons Compatibility Issue
+
+### Error
+
+```text
+scons build failures with newer SCons versions
+```
+
+### Cause
+
+gem5 v20.1.0.4 is incompatible with newer SCons releases.
+
+### Fix
+
+```bash
+pip3 install --user scons==3.1.2
+```
 
 ---
 
-## Problem 1: SCons Version Compatibility
+## Problem 2: Python 3.10 Mapping Import Error
 
-Newer SCons versions break gem5 v20 builds.
-
-Fix applied in:
-
-→ [[#Step 3: Install Compatible SCons Version]]
-
----
-
-## Problem 2: Python 3.10 collections.Mapping Error
-
-Error observed:
+### Error
 
 ```text
 ImportError: cannot import name 'Mapping' from 'collections'
 ```
 
-Cause:
+### Cause
 
-`collections.Mapping` was moved to:
+Python 3.10 moved `Mapping` to:
 
 ```python
 collections.abc.Mapping
 ```
 
-in Python ≥ 3.10.
+### Fix
 
-Fix applied in:
-
-→ [[#Step 4: Patch Python Compatibility Issue]]
+```bash
+sed -i 's/from collections import Mapping/from collections.abc import Mapping/g' \
+src/python/m5/debug.py
+```
 
 ---
 
 ## Problem 3: SIGSTKSZ Compilation Error
 
-Error observed:
+### Error
 
 ```text
 array bound is not an integer constant before ']'
 ```
 
-Fix applied in:
+### Cause
 
-→ [[#Step 5: Patch gem5 Source Code]]
+Modern compilers reject the original static allocation.
+
+### Fix
+
+Replace:
+
+```cpp
+static uint8_t fatalSigStack[2 * SIGSTKSZ];
+```
+
+With:
+
+```cpp
+static uint8_t *fatalSigStack = new uint8_t[2 * SIGSTKSZ];
+```
 
 ---
 
 ## Problem 4: KVM Performance Counter Permission Error
 
-Error observed:
+### Error
 
 ```text
 PerfKvmCounter::attach received error EACCESS
 ```
 
-Cause:
+### Cause
 
-Linux kernel perf restrictions prevented gem5 KVM CPUs from accessing performance counters during KVM fast-forwarding.
+Linux perf restrictions block KVM performance counter access.
 
-Fix applied in:
+### Fix
 
-→ [[#Step 9: Enable KVM Performance Counters]]
+```bash
+sudo sh -c 'echo -1 > /proc/sys/kernel/perf_event_paranoid'
+```
+
+Permanent fix:
+
+```text
+kernel.perf_event_paranoid=-1
+```
+
+inside:
+
+```text
+/etc/sysctl.conf
+```
 
 ---
