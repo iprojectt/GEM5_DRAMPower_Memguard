@@ -1,4 +1,3 @@
-
 ---
 
 # GEM5 Setup and Build Guide (Chronological Steps)
@@ -7,8 +6,17 @@
 
 This document describes the sequence of steps performed to successfully build and configure **gem5 v20.1.0.4** for running **SPEC CPU2017 workloads** with **DRAM tracing** and **MemGuard experiments**.
 
-Each step is listed in the **exact order it was executed**.  
-If a step exists because of a specific issue, the step links to the corresponding **problem description**.
+Target environment used:
+
+| Component | Version |
+|---|---|
+| OS | Ubuntu 22.04.5 LTS |
+| Python | 3.10.12 |
+| Compiler | g++-9 |
+| glibc | 2.35 |
+| gem5 | v20.1.0.4 |
+
+Each step is listed in the exact order it was executed.
 
 ---
 
@@ -18,7 +26,7 @@ Download or clone the gem5 source code and place it inside the project directory
 
 Example project layout:
 
-```
+```text
 spec_2017/
 │
 ├── configs/
@@ -36,33 +44,24 @@ spec_2017/
 
 Navigate to the gem5 root directory:
 
-```
+```bash
 cd gem5
 ```
 
 ---
 
-# Step 2: Create Python 3.8 Virtual Environment
+# Step 2: Install Required Build Dependencies
 
-This step was required because of  
-→ [[#Problem 1: Python Version Compatibility Issue]]
-
-Create the environment:
+Install required packages:
 
 ```bash
-python3.8 -m venv gem5_py38_env
-```
+sudo apt update
 
-Activate it:
-
-```bash
-source gem5_py38_env/bin/activate
-```
-
-Verify:
-
-```bash
-python --version
+sudo apt install \
+    python-is-python3 \
+    python3-pip \
+    g++-9 \
+    m4
 ```
 
 ---
@@ -70,12 +69,18 @@ python --version
 # Step 3: Install Compatible SCons Version
 
 This step was required because of  
-→ [[#Problem 2: SCons Version Compatibility]]
+→ [[#Problem 1: SCons Version Compatibility]]
 
 Install the compatible version:
 
 ```bash
-pip install scons==3.1.2
+pip3 install --user scons==3.1.2 six
+```
+
+Add local binaries to PATH:
+
+```bash
+export PATH=$HOME/.local/bin:$PATH
 ```
 
 Verify:
@@ -86,46 +91,28 @@ scons --version
 
 ---
 
-# Step 4: Install Required Python Dependencies
+# Step 4: Patch Python Compatibility Issue
 
 This step was required because of  
-→ [[#Problem 3: Missing Python Module six]]
+→ [[#Problem 2: Python 3.10 collections.Mapping Error]]
 
-Install the dependency:
-
-```bash
-pip install six
-```
-
-Also install for the Python environment used internally by gem5:
+Patch the source file:
 
 ```bash
-~/.pyenv/versions/3.8.17/bin/pip install six
+sed -i 's/from collections import Mapping/from collections.abc import Mapping/g' \
+src/python/m5/debug.py
 ```
 
 ---
 
-# Step 5: Install Compatible Compiler
+# Step 5: Patch gem5 Source Code
 
 This step was required because of  
-→ [[#Problem 4: Compiler Compatibility]]
-
-Install GCC 9:
-
-```bash
-sudo apt install g++-9
-```
-
----
-
-# Step 6: Patch gem5 Source Code
-
-This step was required because of  
-→ [[#Problem 5: SIGSTKSZ Compilation Error]]
+→ [[#Problem 3: SIGSTKSZ Compilation Error]]
 
 Open the file:
 
-```
+```text
 src/sim/init_signals.cc
 ```
 
@@ -143,16 +130,7 @@ static uint8_t *fatalSigStack = new uint8_t[2 * SIGSTKSZ];
 
 ---
 
-# Step 7: Build gem5
-
-This step depends on fixes applied in:
-
-- [[#Step 2: Create Python 3.8 Virtual Environment]]
-    
-- [[#Step 3: Install Compatible SCons Version]]
-    
-- [[#Step 6: Patch gem5 Source Code]]
-    
+# Step 6: Build gem5
 
 Remove old builds:
 
@@ -163,12 +141,14 @@ rm -rf build
 Compile gem5:
 
 ```bash
-scons build/X86/gem5.opt -j$(nproc) CXX=g++-9
+scons build/X86/gem5.opt -j$(nproc) \
+    PYTHON_CONFIG=/usr/bin/python3-config \
+    CXX=g++-9
 ```
 
 ---
 
-# Step 8: Verify gem5 Build
+# Step 7: Verify gem5 Build
 
 Verify the gem5 binary runs:
 
@@ -180,67 +160,53 @@ If successful, gem5 displays its usage information.
 
 ---
 
-# Step 9: Build gem5 Utility Programs
+# Step 8: Build gem5 Utility Programs
 
-Build the **m5 utility**.
-
-```
-cd gem5/util/m5
-```
-
-Compile:
+Build the m5 utility:
 
 ```bash
+cd util/m5
 scons build/x86/out/m5
 ```
 
----
-
-# Step 10: Build Terminal Utility
-
-Build the terminal program used for guest interaction.
-
-```
-cd gem5/util/term
-```
-
-Compile:
+Build terminal utility:
 
 ```bash
+cd ../term
 make
 ```
 
 This produces:
 
-```
+```text
 m5term
 ```
 
 ---
 
-# Step 11: Enable KVM Performance Counters
+# Step 9: Enable KVM Performance Counters
 
 This step was required because of  
-→ [[#Problem 6: KVM Performance Counter Permission Error]]
+→ [[#Problem 4: KVM Performance Counter Permission Error]]
 
-Run:
+Temporary fix:
 
 ```bash
-sudo sysctl -w kernel.perf_event_paranoid=0
+sudo sh -c 'echo -1 > /proc/sys/kernel/perf_event_paranoid'
 ```
 
-Make permanent:
+Permanent fix:
 
 Edit:
 
-```
+```text
 /etc/sysctl.conf
 ```
 
 Add:
 
-```
-kernel.perf_event_paranoid = 0
+```text
+kernel.perf_event_paranoid=-1
 ```
 
 Apply:
@@ -249,9 +215,21 @@ Apply:
 sudo sysctl -p
 ```
 
+Verify:
+
+```bash
+cat /proc/sys/kernel/perf_event_paranoid
+```
+
+Expected output:
+
+```text
+-1
+```
+
 ---
 
-# Step 12: Run gem5 Simulation
+# Step 10: Run gem5 Simulation
 
 Run the benchmark script:
 
@@ -261,16 +239,11 @@ Run the benchmark script:
 
 This performs:
 
-1. Boot gem5
-    
-2. Load Linux kernel
-    
-3. Mount SPEC disk image
-    
-4. Run SPEC workload
-    
-5. Generate DRAM trace
-    
+1. Boot Linux using KVM CPUs
+2. Fast-forward workload execution
+3. Switch to O3 CPUs at ROI
+4. Run detailed simulation
+5. Generate DRAM traces
 
 ---
 
@@ -278,24 +251,24 @@ This performs:
 
 Simulation output is generated in:
 
-```
+```text
 results/<cpu>/<size>/<benchmark>_dramtrace/
 ```
 
 Important files include:
 
-| File               | Description       |
-| ------------------ | ----------------- |
-| dram_raw_trace.txt | DRAM state trace  |
-| stats.txt          | gem5 statistics   |
-| simout             | simulation output |
-| simerr             | simulation errors |
+| File | Description |
+|---|---|
+| dram_raw_trace.txt | DRAM state trace |
+| stats.txt | gem5 statistics |
+| simout | simulation output |
+| simerr | simulation errors |
 
 ---
 
 # Execution Pipeline
 
-```
+```text
 Host Machine
      │
      ▼
@@ -303,6 +276,12 @@ gem5 Simulator
      │
      ▼
 Guest Linux Kernel
+     │
+     ▼
+KVM Fast Forward
+     │
+     ▼
+ROI CPU Switch (O3)
      │
      ▼
 SPEC CPU2017 Workloads
@@ -318,29 +297,9 @@ DRAMPower Analysis
 
 # Referenced Problems
 
-The following problems explain **why certain steps were required**.
-
 ---
 
-## Problem 1: Python Version Compatibility Issue
-
-Error observed:
-
-```
-ModuleNotFoundError: No module named 'imp'
-```
-
-Cause:
-
-The `imp` module was removed in Python ≥ 3.10.
-
-Fix applied in:
-
-→ [[#Step 2: Create Python 3.8 Virtual Environment]]
-
----
-
-## Problem 2: SCons Version Compatibility
+## Problem 1: SCons Version Compatibility
 
 Newer SCons versions break gem5 v20 builds.
 
@@ -350,56 +309,58 @@ Fix applied in:
 
 ---
 
-## Problem 3: Missing Python Module six
+## Problem 2: Python 3.10 collections.Mapping Error
 
-Error:
+Error observed:
 
+```text
+ImportError: cannot import name 'Mapping' from 'collections'
 ```
-ModuleNotFoundError: six
+
+Cause:
+
+`collections.Mapping` was moved to:
+
+```python
+collections.abc.Mapping
 ```
+
+in Python ≥ 3.10.
 
 Fix applied in:
 
-→ [[#Step 4: Install Required Python Dependencies]]
+→ [[#Step 4: Patch Python Compatibility Issue]]
 
 ---
 
-## Problem 4: Compiler Compatibility
+## Problem 3: SIGSTKSZ Compilation Error
 
-Modern GCC versions caused build errors.
+Error observed:
 
-Fix applied in:
-
-→ [[#Step 5: Install Compatible Compiler]]
-
----
-
-## Problem 5: SIGSTKSZ Compilation Error
-
-Error:
-
-```
+```text
 array bound is not an integer constant before ']'
 ```
 
 Fix applied in:
 
-→ [[#Step 6: Patch gem5 Source Code]]
+→ [[#Step 5: Patch gem5 Source Code]]
 
 ---
 
-## Problem 6: KVM Performance Counter Permission Error
+## Problem 4: KVM Performance Counter Permission Error
 
-Error:
+Error observed:
 
-```
+```text
 PerfKvmCounter::attach received error EACCESS
 ```
 
+Cause:
+
+Linux kernel perf restrictions prevented gem5 KVM CPUs from accessing performance counters during KVM fast-forwarding.
+
 Fix applied in:
 
-→ [[#Step 11: Enable KVM Performance Counters]]
+→ [[#Step 9: Enable KVM Performance Counters]]
 
 ---
-
-
